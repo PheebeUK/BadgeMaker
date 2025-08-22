@@ -1,0 +1,29 @@
+{
+    "fonts": {
+        "line1": {
+            "font_name": "arialbd.ttf",
+            "font_size": 30,
+            "y_position": 2
+        },
+        "line2": {
+            "font_name": "arialbd.ttf",
+            "font_size": 12,
+            "y_position": 13.5
+        },
+        "line3": {
+            "font_name": "arialbd.ttf",
+            "font_size": 18,
+            "y_position": 20
+        }
+    },
+    "badge_options": {
+        "draw_border": false,
+        "border_radius": 2.5,
+        "background_image": "sample_background.png",
+        "background_opacity": 0.5
+    },
+    "pdf_offsets": {
+        "x_offset": 1.0,
+        "y_offset": -16.0
+    }
+}
