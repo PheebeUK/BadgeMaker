@@ -1,4 +1,4 @@
-# BadgeMaker2
+# BadgeMaker
 
 A tool for creating 3D printed badges with PDF layouts for printing. Automatically determines badge dimensions from STL files and generates appropriate PDF layouts with registration marks.
 
