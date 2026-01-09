@@ -5,7 +5,7 @@ PDFGenerator class for creating PDF documents using reportlab.
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.colors import black, white
+from reportlab.lib.colors import black, white, red
 from PIL import Image, ImageDraw, ImageFont
 import io
 import os
@@ -64,17 +64,10 @@ class PDFGenerator:
         self.text_line_height = 8  # mm between text lines
         
         # Registration mark settings
-        self.registration_mark_size = 5.0  # mm
-        lknobx = (self.page_width / 2) - (self.page_width / 3)
-        rknobx = (self.page_width / 2) + (self.page_width / 3)
-       
-        self.registration_mark_positions = [
-            (self.page_width / 2, self.page_height - 10),  # Top center
-            (lknobx, 10),                     # Bottom left
-            (rknobx, 10)                # Bottom right
-        ]
+        self.crosshair_size = 12.0  # mm
 
-    def create_badge_image(self, text_config, background_image_path=None, draw_border=False, border_radius=2.0, background_opacity=1.0):
+
+    def create_badge_image(self, text_config, background_image_path=None, draw_border=False, border_radius=2.0, background_opacity=1.0, background_scale=1.0):
         """
         Create a badge image with text and optional background.
         
@@ -89,6 +82,7 @@ class PDFGenerator:
             draw_border (bool): Whether to draw a rounded rectangle border around the badge
             border_radius (float): Border radius in mm
             background_opacity (float): Opacity of background image (0.0 to 1.0)
+            background_scale (float): Scale factor for background image (1.0 = full size, 0.8 = 80% size, etc.)
             
         Returns:
             PIL.Image: The created badge image
@@ -123,8 +117,12 @@ class PDFGenerator:
                     print(f"  For best results, resize your background image to {optimal_width} × {optimal_height} pixels")
                     self.background_warnings_shown.add(background_image_path)
                 
-                # Resize background image to fit badge
-                bg_img = bg_img.resize((img_width, img_height))
+                # Calculate scaled background dimensions
+                scaled_width = int(img_width * background_scale)
+                scaled_height = int(img_height * background_scale)
+                
+                # Resize background image to scaled size
+                bg_img = bg_img.resize((scaled_width, scaled_height))
                 
                 # Apply opacity if less than 1.0
                 if background_opacity < 1.0:
@@ -145,11 +143,21 @@ class PDFGenerator:
                     
                     bg_img_with_alpha.putdata(new_alpha_data)
                     
-                    # Composite the background image onto the base image
-                    img = Image.alpha_composite(img.convert('RGBA'), bg_img_with_alpha).convert('RGB')
+                    # Calculate position to center the scaled background
+                    paste_x = (img_width - scaled_width) // 2
+                    paste_y = (img_height - scaled_height) // 2
+                    
+                    # Create a temporary image to composite the scaled background
+                    temp_img = img.convert('RGBA')
+                    temp_img.paste(bg_img_with_alpha, (paste_x, paste_y), bg_img_with_alpha)
+                    img = temp_img.convert('RGB')
                 else:
-                    # No opacity, just paste the background image
-                    img.paste(bg_img, (0, 0))
+                    # Calculate position to center the scaled background
+                    paste_x = (img_width - scaled_width) // 2
+                    paste_y = (img_height - scaled_height) // 2
+                    
+                    # No opacity, just paste the background image centered
+                    img.paste(bg_img, (paste_x, paste_y))
                     
             except Exception as e:
                 print(f"Warning: Could not load background image '{background_image_path}': {e}")
@@ -247,19 +255,40 @@ class PDFGenerator:
         center_y = y + (self.badge_height / 2)
         return (center_x, center_y)
 
-    def add_registration_marks(self, canvas_obj):
+    def add_registration_marks(self, canvas_obj, badge_centers=None):
         """
         Add registration marks to the PDF.
         
         Args:
             canvas_obj: ReportLab canvas object
+            badge_centers (list): List of badge center points to calculate layout center
         """
-        canvas_obj.setFillColor(black)
+        canvas_obj.setStrokeColor(red)
+        canvas_obj.setLineWidth(0.5)  # Thin line width
         
-        for x, y in self.registration_mark_positions:
-            # Draw filled circle
-            radius = self.registration_mark_size / 2
-            canvas_obj.circle(x * mm, y * mm, radius * mm, fill=1)
+        # Calculate center based on badge layout if badge centers are provided
+        if badge_centers and len(badge_centers) > 0:
+            # Calculate the center of the badge layout
+            center_x = (self.page_width / 2) + self.x_offset  # Badges are centered horizontally
+            # Calculate vertical center from badge positions and apply y_offset
+            y_positions = [center[1] for center in badge_centers]
+            center_y = (min(y_positions) + max(y_positions)) / 2 + self.y_offset
+        else:
+            # Fallback to page center
+            center_x = (self.page_width / 2) + self.x_offset
+            center_y = (self.page_height / 2) + self.y_offset
+        
+        # Draw horizontal line
+        canvas_obj.line(
+            (center_x - self.crosshair_size/2) * mm, center_y * mm,
+            (center_x + self.crosshair_size/2) * mm, center_y * mm
+        )
+        
+        # Draw vertical line
+        canvas_obj.line(
+            center_x * mm, (center_y - self.crosshair_size/2) * mm,
+            center_x * mm, (center_y + self.crosshair_size/2) * mm
+        )
 
     def create_badge_page(self, output_path, badges_data):
         """
@@ -270,9 +299,6 @@ class PDFGenerator:
             badges_data (list): List of badge data dictionaries
         """
         c = canvas.Canvas(output_path, pagesize=A4)
-        
-        # Add registration marks
-        self.add_registration_marks(c)
         
         # Calculate how many badges can fit on a single page
         # Leave margins: 20mm top, 30mm bottom = 50mm total margins
@@ -306,15 +332,11 @@ class PDFGenerator:
         
         for i, badge_data in enumerate(badges_data):
             # Determine column
-            if i % 2 == 0:  # Even indices go in first column
+            if i % 2 == 0:  # Even indices go in second column (right)
+                x = self.column2_x - (self.badge_width / 2)
+            else:  # Odd indices go in first column (left)
                 x = self.column1_x - (self.badge_width / 2)
                 badges_per_column += 1
-            else:  # Odd indices go in second column
-                x = self.column2_x - (self.badge_width / 2)
-            
-
-            
-
             
             # Create badge image
             badge_img = self.create_badge_image(
@@ -322,7 +344,8 @@ class PDFGenerator:
                 background_image_path=badge_data.get('background_image'),
                 draw_border=badge_data.get('draw_border', False),
                 border_radius=badge_data.get('border_radius', 2.0),
-                background_opacity=badge_data.get('background_opacity', 1.0)
+                background_opacity=badge_data.get('background_opacity', 1.0),
+                background_scale=badge_data.get('background_scale', 1.0)
             )
             
             # Add badge to PDF and get its center point
@@ -330,15 +353,14 @@ class PDFGenerator:
             badge_centers.append(center_point)
             
             # Move to next row if we've filled both columns
-            if i % 2 == 1:  # After placing in second column
+            if i % 2 == 1:  # After placing in first column (left)
                 old_y = current_y
                 current_y -= (self.badge_height + 10)  # 10mm gap between rows
-                
-
+        
+        # Add registration marks using the calculated badge centers
+        self.add_registration_marks(c, badge_centers)
         
         c.save()
-        
-
         
         return badge_centers
 

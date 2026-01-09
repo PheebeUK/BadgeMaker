@@ -22,11 +22,11 @@ class MeshBuilder:
         # Badge dimensions (in mm)
         self.badge_width: float = 75.0
         self.badge_height: float = 30.0
-        self.badge_thickness: float = 3.0
+        self.badge_thickness: float = 3
         
         # Magnet recess dimensions (in mm)
-        self.recess_width: float = 44.0
-        self.recess_height: float = 14.0
+        self.recess_width: float = 46.0
+        self.recess_height: float = 14.5
         self.recess_depth: float = 0.6
         
         # Corner radius (in mm)
@@ -431,6 +431,63 @@ class MeshBuilder:
 
         return cylinder_mesh
 
+    def create_crosshair_mesh(self, size: float = 10.0, height: float = 0.4) -> mr.Mesh:
+        """
+        Create a crosshair mesh that matches the PDF registration mark.
+        
+        Args:
+            size (float): Size of the crosshair in mm (default: 10.0mm)
+            height (float): Height/thickness of the crosshair in mm (default: 0.4mm)
+            
+        Returns:
+            mr.Mesh: Crosshair mesh.
+        """
+        # Calculate image size with padding
+        img_size = int(size * self.resolution) + 8  # Add padding for distance map
+        
+        img = Image.new('1', (img_size, img_size), 1)  # White background
+        draw = ImageDraw.Draw(img)
+        
+        # Calculate crosshair dimensions
+        center = img_size // 2
+        half_size_pixels = int((size / 2) * self.resolution)
+        line_width_pixels = max(1, int(0.5 * self.resolution))  # 0.5mm line width
+        
+        # Draw horizontal line
+        draw.rectangle([
+            center - half_size_pixels, center - line_width_pixels // 2,
+            center + half_size_pixels, center + line_width_pixels // 2
+        ], fill=0)
+        
+        # Draw vertical line
+        draw.rectangle([
+            center - line_width_pixels // 2, center - half_size_pixels,
+            center + line_width_pixels // 2, center + half_size_pixels
+        ], fill=0)
+        
+        # Convert image to distance map
+        crosshair_dm = self.pil_to_meshlib_distancemap(img)
+        if crosshair_dm is None:
+            print("Error: Failed to create DistanceMap from crosshair image")
+            return None
+            
+        # Convert distance map to mesh
+        crosshair_mesh = self.distancemap_to_mesh(crosshair_dm)
+        if crosshair_mesh is None:
+            print("Error: Failed to convert DistanceMap to crosshair mesh")
+            return None
+            
+        # Add height to the mesh
+        mr.addBaseToPlanarMesh(crosshair_mesh, zOffset=height * self.resolution)
+        
+        # Scale down to correct physical dimensions
+        scale_factor: float = 0.1  # 1/10 to convert from 10 pixels per mm back to mm
+        scale_transform = mr.RigidScaleXf3f(mr.Vector3f(0, 0, 0), mr.Vector3f(0, 0, 0), scale_factor)
+        affine_transform = scale_transform.rigidScaleXf()
+        crosshair_mesh.transform(affine_transform)
+        
+        return crosshair_mesh
+
         
     def create_registration_knob_stl(self, output_file: str) -> bool:
         """
@@ -468,7 +525,7 @@ class MeshBuilder:
         mr.saveMesh(self.registration_mesh, output_file)
         return self.registration_mesh
     
-    def create_l_shaped_stop(self, arm_length: float = 20.0, arm_width: float = 5.0, height: float = 2.0) -> mr.Mesh:
+    def create_l_shaped_stop(self, arm_length: float = 20.0, arm_width: float = 5.0, height: float = 1.0) -> mr.Mesh:
         """
         Create an L-shaped registration stop for acetate sheet alignment.
         
@@ -530,7 +587,7 @@ class MeshBuilder:
         
         return mesh
     
-    def create_l_stop_registration_stl(self, output_file: str, arm_length: float = 20.0, arm_width: float = 5.0, height: float = 2.0) -> bool:
+    def create_l_stop_registration_stl(self, output_file: str, arm_length: float = 20.0, arm_width: float = 5.0, height: float = 1.0, include_cylinder: bool = True) -> bool:
         """
         Generate STL file with registration stops for acetate sheet alignment.
         
@@ -539,6 +596,7 @@ class MeshBuilder:
             arm_length (float): Length of each arm in mm (default: 20.0)
             arm_width (float): Width of each arm in mm (default: 5.0)
             height (float): Height/thickness of the stop in mm (default: 2.0)
+            include_cylinder (bool): Whether to include the cylinder stop (default: True)
             
         Returns:
             bool: True if STL generation succeeds, False otherwise.
@@ -548,8 +606,11 @@ class MeshBuilder:
         stop_positions = [
             (0, -6, self.page_height-arm_length-14),  # Top left corner, just outside paper 
             (1, self.page_width + 6, self.page_height-arm_length-14),
-            (2, self.page_width/2, -6)  # Top right corner, just outside paper
         ]
+        
+        # Add cylinder stop position only if include_cylinder is True
+        if include_cylinder:
+            stop_positions.append((2, self.page_width/2, -6))  # Top right corner, just outside paper
          
         all_stops = [] 
         for i, (stop_type, x, y) in enumerate(stop_positions):

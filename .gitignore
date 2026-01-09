@@ -209,3 +209,5 @@ __marimo__/
 # Project-specific ignores
 RepairCafe/
 
+*.stl
+*.pdf

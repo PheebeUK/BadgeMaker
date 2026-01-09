@@ -10,16 +10,18 @@ from pathlib import Path
 # Import our custom classes
 from meshbuilder import MeshBuilder
 from pdfgenerator import PDFGenerator
+import meshlib.mrmeshpy as mr
 
 
 class BadgeMaker:
     """Main coordinator class for badge creation process"""
     
-    def __init__(self, config_file=None):
+    def __init__(self, config_file=None, no_cylinder=False):
         """Initialize BadgeMaker with configuration"""
         self.config = self._load_config(config_file)
         self.mesh_builder = None
         self.pdf_generator = None
+        self.no_cylinder = no_cylinder
         # Load offsets from config
         self.x_offset = self.config.get('pdf_offsets', {}).get('x_offset', 0.0)
         self.y_offset = self.config.get('pdf_offsets', {}).get('y_offset', 0.0)
@@ -38,7 +40,9 @@ class BadgeMaker:
             "badge_options": {
                 "draw_border": True,
                 "border_radius": 2.0,
-                "background_image": None
+                "background_image": None,
+                "background_opacity": 1.0,
+                "background_scale": 1.0
             },
             "pdf_offsets": {
                 "x_offset": 0.0,
@@ -119,13 +123,15 @@ class BadgeMaker:
                 if text_config:
                     background_image = self.config['badge_options'].get('background_image')
                     background_opacity = self.config['badge_options'].get('background_opacity', 1.0)
+                    background_scale = self.config['badge_options'].get('background_scale', 1.0)
                     
                     badges_data.append({
                         'text_config': text_config,
                         'draw_border': self.config['badge_options']['draw_border'],
                         'border_radius': self.config['badge_options']['border_radius'],
                         'background_image': background_image,
-                        'background_opacity': background_opacity
+                        'background_opacity': background_opacity,
+                        'background_scale': background_scale
                     })
         return badges_data
     
@@ -136,7 +142,28 @@ class BadgeMaker:
         
         print(f"Creating STL with L-shaped registration stops: {output_file}")
         # Use the new L-shaped stop method with default dimensions
-        self.mesh_builder.create_l_stop_registration_stl(output_file, arm_length=20.0, arm_width=5.0, height=2.0)
+        self.mesh_builder.create_l_stop_registration_stl(output_file, arm_length=20.0, arm_width=5.0, height=2.0, include_cylinder=not self.no_cylinder)
+    
+    def create_crosshair_stl(self, output_file):
+        """Create STL with crosshair registration mark"""
+        if not self.mesh_builder:
+            raise RuntimeError("No badge STL loaded. Call load_badge_stl() first.")
+        
+        print(f"Creating STL with crosshair registration mark: {output_file}")
+        
+        # Create crosshair mesh
+        crosshair_mesh = self.mesh_builder.create_crosshair_mesh(size=10.0, height=0.4)
+        
+        # Position the crosshair at the center of the page
+        center_x = self.mesh_builder.page_width / 2
+        center_y = self.mesh_builder.page_height / 2
+        
+        # Translate mesh to center position
+        translation = mr.AffineXf3f.translation(mr.Vector3f(center_x, center_y, 0))
+        crosshair_mesh.transform(translation)
+        
+        # Save to STL file
+        mr.saveMesh(crosshair_mesh, output_file)
     
     def create_layout_stl(self, output_file, badge_centers):
         """Create STL with badge layout positioned according to PDF layout"""
@@ -180,9 +207,12 @@ class BadgeMaker:
             if output_prefix is None:
                 output_prefix = "badge_"
             
-            # Always create all three output files
-            reg_stl_file = f"{output_prefix}registration.stl"
-            self.create_registration_stl(reg_stl_file)
+            # Always create all four output files
+            holder_stl_file = f"{output_prefix}holder.stl"
+            self.create_registration_stl(holder_stl_file)
+            
+            crosshair_stl_file = f"{output_prefix}crosshair.stl"
+            self.create_crosshair_stl(crosshair_stl_file)
             
             pdf_file = f"{output_prefix}badges.pdf"
             badge_centers = self.create_pdf(badges_data, pdf_file)
@@ -214,12 +244,13 @@ def main():
     parser.add_argument('stl_file', nargs='?', help='Badge STL file to use as template (optional, uses default if not provided)')
     parser.add_argument('--config', '-c', help='Configuration JSON file')
     parser.add_argument('--prefix', '-p', help='Output file prefix')
+    parser.add_argument('--no-cylinder', action='store_true', help='Skip adding cylinder stop to registration STL file')
     
     args = parser.parse_args()
     
     try:
         # Create BadgeMaker instance
-        badge_maker = BadgeMaker(config_file=args.config)
+        badge_maker = BadgeMaker(config_file=args.config, no_cylinder=args.no_cylinder)
         
         # Process badges
         badge_maker.process_badges(
